@@ -1,0 +1,10 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "client:build-debug",
+            "command": "cd client/esp32s3-flash && cargo build",
+            "type": "shell"
+        }
+    ]
+}
