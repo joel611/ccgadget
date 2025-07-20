@@ -47,12 +47,35 @@ Develop a smart, IoT-enabled gadget, inspired by the Nest Thermostat, to monitor
   - Dual-core Xtensa LX7 processor, 8MB PSRAM.
   - Built-in Bluetooth 5.0 and 2.4GHz Wi-Fi.
   - GPIO pins for SPI (display) and I2C (touch).
-- Display: 466x466 AMOLED Touch Circular Display (e.g., GC9A01 driver)
+- Display: 466x466 AMOLED Touch Circular Display
   - High-resolution, vibrant display for clear visuals.
   - Capacitive touch for user interaction.
+  - Driver: 
+    - Display (QSPI): SH8601/CO5300, 
+    - Touch (I2C): FT3168 
 - Power Supply:
   - Rechargeable Li-Po battery (3.7V, 1000mAh) for portability.
   - USB-C port for charging and debugging.
+- Chips:
+  - PCF85063: RTC chip
+  - QMI8658c: reading and printing accelerometer data, gyroscope data, and temperature data
+
+- AMOLED Definition
+
+| AMOLED pin |	ESP32-S3 pin |	Description |
+|---|---|---|
+|QSPI_CS |	GPIO 9 | QSPI chip selection
+|QSPI_CLK | GPIO 10 | QSPI clock pin
+|QSPI_D0 | GPIO 11 | QSPI D0 data
+|QSPI_D1 | GPIO 12 | QSPI D1 data
+|QSPI_D2 | GPIO 13 | QSPI D2 data
+|QSPI_D3 | GPIO 14 | QSPI D3 data
+|AMOLED_RESET | GPIO 21 |	AMOLED reset pin
+|AMOLED_EN | GPIO 42 |	AMOLED enable pin
+|TP_SDA |	GPIO 47 |	TP I2C data pin
+|TP_SCL |	GPIO 48 |	TP I2C clock pin
+
+
 ### 3.1.2 Server
   - Supported Platforms: macOS, Linux (e.g., Ubuntu), Windows 10/11.
   - Minimum Specs: 4GB RAM, dual-core CPU, 10GB free storage.
