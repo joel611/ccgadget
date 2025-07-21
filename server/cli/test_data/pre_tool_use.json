@@ -1,0 +1,11 @@
+{
+  "session_id": "test-session-123",
+  "transcript_path": "/tmp/test-transcript.jsonl",
+  "cwd": "/Users/joel.chan/Projects/personal/ccgadget/server/cli",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/path/to/file.txt",
+    "content": "Hello, world!"
+  }
+}
