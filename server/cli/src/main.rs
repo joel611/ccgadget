@@ -43,27 +43,36 @@ enum Commands {
     },
     /// Trigger immediate data transmission (for Claude Code hooks)
     Trigger,
-    /// Install Claude Code hooks for automatic monitoring
-    InstallHook {
-        /// Hook type to install
-        #[arg(value_enum)]
-        hook_type: HookType,
+    /// Setup Claude Code hooks for automatic monitoring
+    SetupHook {
+        /// Scope for hook installation (local or user)
+        #[arg(short, long, default_value = "local")]
+        scope: HookScope,
         /// Force reinstall if hook already exists
         #[arg(short, long)]
         force: bool,
+        /// Automatically approve adding hooks alongside existing ones
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
-enum HookType {
-    /// Install all available hooks
-    All,
-    /// Session start/end hooks
-    Session,
-    /// Command execution hooks
-    Command,
-    /// Usage monitoring hooks
-    Usage,
+enum HookScope {
+    /// Install hooks at user level (~/.claude/settings.json)
+    User,
+    /// Install hooks at project local level (.claude/settings.local.json)
+    Local,
+}
+
+#[derive(Debug)]
+enum HookSetupResult {
+    /// Hook was successfully added
+    Added,
+    /// Hook was skipped (user declined or other reason)
+    Skipped,
+    /// Hook already exists and no action was needed
+    AlreadyExists,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -115,8 +124,8 @@ async fn main() {
         Some(Commands::Trigger) => {
             handle_trigger();
         }
-        Some(Commands::InstallHook { hook_type, force }) => {
-            handle_install_hook(hook_type, *force);
+        Some(Commands::SetupHook { scope, force, yes }) => {
+            handle_setup_hook(scope, *force, *yes);
         }
         None => {
             // No subcommand provided, show help
@@ -577,13 +586,387 @@ fn log_trigger_payload(hook_input: Option<&HookInput>) -> Result<PathBuf, Box<dy
     Ok(log_file_path)
 }
 
-fn handle_install_hook(hook_type: &HookType, force: bool) {
-    println!("🔧 Installing Claude Code hooks...");
-    println!("   Hook type: {:?}", hook_type);
+/// Setup Claude Code hooks by detecting settings files and configuring hooks
+fn setup_claude_hooks(scope: &HookScope, force: bool, auto_approve: bool) -> Result<String, Box<dyn std::error::Error>> {
+    // Find Claude settings file based on scope
+    let settings_path = find_claude_settings_file(scope)?;
+    println!("   📁 Found Claude settings: {}", settings_path.display());
+    
+    // Read existing settings
+    let mut settings = read_claude_settings(&settings_path)?;
+    
+    // Get all hooks to configure (setup all hooks by default)
+    let hooks_config = get_all_hooks_config();
+    
+    // Setup hooks in settings
+    let mut updated_hooks = 0;
+    let mut skipped_hooks = Vec::new();
+    
+    for (event_name, hook_command) in hooks_config {
+        match setup_hook_for_event(&mut settings, &event_name, &hook_command, force, auto_approve)? {
+            HookSetupResult::Added => {
+                updated_hooks += 1;
+            }
+            HookSetupResult::Skipped => {
+                skipped_hooks.push(event_name);
+            }
+            HookSetupResult::AlreadyExists => {
+                // Hook already exists, no action needed
+            }
+        }
+    }
+    
+    if !skipped_hooks.is_empty() {
+        println!("   ℹ️ Skipped hooks for events: {}", skipped_hooks.join(", "));
+    }
+    
+    // Write settings back to file
+    write_claude_settings(&settings_path, &settings)?;
+    
+    Ok(format!("Successfully configured {} hook(s) in {}", updated_hooks, settings_path.display()))
+}
+
+/// Find the appropriate Claude settings file based on scope
+fn find_claude_settings_file(scope: &HookScope) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    match scope {
+        HookScope::Local => {
+            // Use project-local settings
+            let project_local = PathBuf::from(".claude").join("settings.local.json");
+            
+            // Create .claude directory if it doesn't exist
+            let claude_dir = PathBuf::from(".claude");
+            if !claude_dir.exists() {
+                fs::create_dir_all(&claude_dir)?;
+            }
+            
+            // Create empty settings file if it doesn't exist
+            if !project_local.exists() {
+                let empty_settings = serde_json::json!({});
+                fs::write(&project_local, serde_json::to_string_pretty(&empty_settings)?)?;
+                println!("   📝 Created new local settings file: {}", project_local.display());
+            }
+            
+            Ok(project_local)
+        }
+        HookScope::User => {
+            // Use user settings
+            let home_dir = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .map_err(|_| "Could not determine home directory")?;
+            let home_path = PathBuf::from(&home_dir);
+            let user_settings = home_path.join(".claude").join("settings.json");
+            
+            // Create ~/.claude directory if it doesn't exist
+            let claude_dir = home_path.join(".claude");
+            if !claude_dir.exists() {
+                fs::create_dir_all(&claude_dir)?;
+            }
+            
+            // Create empty settings file if it doesn't exist
+            if !user_settings.exists() {
+                let empty_settings = serde_json::json!({});
+                fs::write(&user_settings, serde_json::to_string_pretty(&empty_settings)?)?;
+                println!("   📝 Created new user settings file: {}", user_settings.display());
+            }
+            
+            Ok(user_settings)
+        }
+    }
+}
+
+/// Read Claude settings from file
+fn read_claude_settings(path: &PathBuf) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    if path.exists() {
+        let content = fs::read_to_string(path)?;
+        if content.trim().is_empty() {
+            Ok(serde_json::json!({}))
+        } else {
+            Ok(serde_json::from_str(&content)?)
+        }
+    } else {
+        Ok(serde_json::json!({}))
+    }
+}
+
+/// Write Claude settings to file
+fn write_claude_settings(path: &PathBuf, settings: &serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
+    let formatted = serde_json::to_string_pretty(settings)?;
+    fs::write(path, formatted)?;
+    Ok(())
+}
+
+/// Get all hook configurations for CCGadget
+fn get_all_hooks_config() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("UserPromptSubmit", "ccgadget trigger"),
+        ("PreToolUse", "ccgadget trigger"),
+        ("PostToolUse", "ccgadget trigger"),
+        ("Notification", "ccgadget trigger"),
+        ("Stop", "ccgadget trigger"),
+    ]
+}
+
+/// Setup a hook for a specific event in the settings
+fn setup_hook_for_event(
+    settings: &mut serde_json::Value,
+    event_name: &str,
+    hook_command: &str,
+    force: bool,
+    auto_approve: bool,
+) -> Result<HookSetupResult, Box<dyn std::error::Error>> {
+    // Ensure hooks object exists
+    if !settings.get("hooks").is_some() {
+        settings["hooks"] = serde_json::json!({});
+    }
+    
+    let hooks = settings["hooks"].as_object_mut()
+        .ok_or("Failed to get hooks object")?;
+    
+    // Check if event already has hooks configured
+    if hooks.contains_key(event_name) {
+        // First check the current state (need immutable borrow)
+        let event_hooks_value = hooks.get(event_name).unwrap();
+        let exact_hook_exists = exact_hook_exists(event_hooks_value, hook_command);
+        let any_ccgadget_exists = any_ccgadget_hook_exists(event_hooks_value, hook_command);
+        let has_other_hooks = event_hooks_value.as_array()
+            .map(|arr| !arr.is_empty())
+            .unwrap_or(false);
+        
+        if exact_hook_exists {
+            // Perfect match - hook is already correctly configured
+            println!("   ✅ Hook for {} already correctly configured", event_name);
+            return Ok(HookSetupResult::AlreadyExists);
+        } else if any_ccgadget_exists {
+            // ccgadget hook exists but with wrong configuration - ask user
+            if force {
+                println!("   🔧 Forcing update of mismatched hook for {}", event_name);
+            } else if auto_approve {
+                println!("   ✅ Auto-approving hook update for {} (--yes flag)", event_name);
+            } else if !ask_user_permission_to_fix_hook(event_name, event_hooks_value, hook_command)? {
+                println!("   ⏭️ Skipping hook update for {} (user declined)", event_name);
+                return Ok(HookSetupResult::Skipped);
+            }
+        } else if has_other_hooks {
+            // Check if there are any non-ccgadget hooks
+            let has_non_ccgadget_hooks = event_hooks_value.as_array()
+                .map(|arr| arr.iter().any(|hook_group| !hook_group_contains_command(hook_group, "ccgadget")))
+                .unwrap_or(false);
+                
+            if has_non_ccgadget_hooks {
+                // Other non-ccgadget hooks exist - ask user for permission to add
+                if auto_approve {
+                    println!("   ✅ Auto-approving hook addition for {} (--yes flag)", event_name);
+                } else if !ask_user_permission_for_event(event_name, event_hooks_value)? {
+                    println!("   ⏭️ Skipping hook for {} (user declined)", event_name);
+                    return Ok(HookSetupResult::Skipped);
+                }
+            }
+        }
+        
+        // Now get mutable borrow for modifications
+        let event_hooks_array = hooks.get_mut(event_name).unwrap()
+            .as_array_mut()
+            .ok_or("Event hooks must be an array")?;
+        
+        // Remove existing ccgadget hooks (they exist but are wrong)
+        if any_ccgadget_exists {
+            event_hooks_array.retain(|hook_group| {
+                !hook_group_contains_command(hook_group, hook_command)
+            });
+        }
+        
+        // Add our hook to the existing array
+        let ccgadget_hook = serde_json::json!({
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command
+                }
+            ]
+        });
+        
+        event_hooks_array.push(ccgadget_hook);
+    } else {
+        // No existing hooks for this event - create new array
+        let hook_config = serde_json::json!([
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_command
+                    }
+                ]
+            }
+        ]);
+        
+        hooks.insert(event_name.to_string(), hook_config);
+    }
+    
+    println!("   ✅ Configured hook for {}", event_name);
+    Ok(HookSetupResult::Added)
+}
+
+/// Check if the exact expected hook configuration already exists
+fn exact_hook_exists(event_hooks: &serde_json::Value, target_command: &str) -> bool {
+    if let Some(hooks_array) = event_hooks.as_array() {
+        for hook_group in hooks_array {
+            // Check if this hook group matches our expected configuration exactly
+            if is_exact_ccgadget_hook(hook_group, target_command) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if a hook group is exactly the ccgadget hook we expect
+fn is_exact_ccgadget_hook(hook_group: &serde_json::Value, target_command: &str) -> bool {
+    // Expected: {"matcher": "", "hooks": [{"type": "command", "command": "ccgadget trigger"}]}
+    let expected_matcher = "";
+    
+    // Check matcher
+    let matcher = hook_group.get("matcher")
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    
+    if matcher != expected_matcher {
+        return false;
+    }
+    
+    // Check hooks array
+    if let Some(hooks) = hook_group.get("hooks").and_then(|h| h.as_array()) {
+        if hooks.len() != 1 {
+            return false;
+        }
+        
+        let hook = &hooks[0];
+        let hook_type = hook.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let hook_command = hook.get("command").and_then(|c| c.as_str()).unwrap_or("");
+        
+        return hook_type == "command" && hook_command == target_command;
+    }
+    
+    false
+}
+
+/// Check if any ccgadget-related hook exists (even if not exact match)
+fn any_ccgadget_hook_exists(event_hooks: &serde_json::Value, target_command: &str) -> bool {
+    if let Some(hooks_array) = event_hooks.as_array() {
+        for hook_group in hooks_array {
+            if hook_group_contains_command(hook_group, target_command) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if a specific hook group contains a command
+fn hook_group_contains_command(hook_group: &serde_json::Value, target_command: &str) -> bool {
+    if let Some(hooks) = hook_group.get("hooks").and_then(|h| h.as_array()) {
+        for hook in hooks {
+            if let Some(command) = hook.get("command").and_then(|c| c.as_str()) {
+                if command.contains(target_command) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Ask user for permission to add hooks for a specific event when conflicts exist
+fn ask_user_permission_for_event(event_name: &str, existing_hooks: &serde_json::Value) -> Result<bool, Box<dyn std::error::Error>> {
+    println!("   ⚠️ Event '{}' already has existing hooks configured:", event_name);
+    
+    // Display existing hooks in a user-friendly way
+    if let Some(hooks_array) = existing_hooks.as_array() {
+        for (i, hook_group) in hooks_array.iter().enumerate() {
+            if let Some(hooks) = hook_group.get("hooks").and_then(|h| h.as_array()) {
+                for (j, hook) in hooks.iter().enumerate() {
+                    if let Some(command) = hook.get("command").and_then(|c| c.as_str()) {
+                        let matcher = hook_group.get("matcher")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("");
+                        let matcher_display = if matcher.is_empty() { "all" } else { matcher };
+                        println!("     {}.{}: {} (matcher: {})", i + 1, j + 1, command, matcher_display);
+                    }
+                }
+            }
+        }
+    }
+    
+    print!("   Add 'ccgadget trigger' for {} alongside existing hooks? [y/N]: ", event_name);
+    std::io::stdout().flush()?;
+    
+    // Read user input
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    
+    Ok(input == "y" || input == "yes")
+}
+
+/// Ask user for permission to fix/update a mismatched ccgadget hook
+fn ask_user_permission_to_fix_hook(event_name: &str, existing_hooks: &serde_json::Value, expected_command: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    println!("   ⚠️ Event '{}' has ccgadget hooks but with incorrect configuration:", event_name);
+    
+    // Show current vs expected
+    println!("   Current hooks:");
+    if let Some(hooks_array) = existing_hooks.as_array() {
+        for (i, hook_group) in hooks_array.iter().enumerate() {
+            if hook_group_contains_command(hook_group, "ccgadget") {
+                if let Some(hooks) = hook_group.get("hooks").and_then(|h| h.as_array()) {
+                    for (j, hook) in hooks.iter().enumerate() {
+                        if let Some(command) = hook.get("command").and_then(|c| c.as_str()) {
+                            if command.contains("ccgadget") {
+                                let matcher = hook_group.get("matcher")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("");
+                                let matcher_display = if matcher.is_empty() { "all" } else { &format!("'{}'", matcher) };
+                                println!("     {}.{}: {} (matcher: {})", i + 1, j + 1, command, matcher_display);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    println!("   Expected: {} (matcher: all)", expected_command);
+    
+    print!("   Update ccgadget hook for {} to correct configuration? [y/N]: ", event_name);
+    std::io::stdout().flush()?;
+    
+    // Read user input
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    
+    Ok(input == "y" || input == "yes")
+}
+
+fn handle_setup_hook(scope: &HookScope, force: bool, auto_approve: bool) {
+    println!("🔧 Setting up Claude Code hooks...");
+    println!("   Scope: {:?}", scope);
     if force {
         println!("   Force reinstall enabled");
     }
-    println!("   Status: Not yet implemented");
+    if auto_approve {
+        println!("   Auto-approve enabled");
+    }
+    
+    match setup_claude_hooks(scope, force, auto_approve) {
+        Ok(message) => {
+            println!("   ✅ {}", message);
+        }
+        Err(e) => {
+            eprintln!("   ❌ Failed to setup hooks: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -694,17 +1077,13 @@ mod tests {
     }
 
     #[test]
-    fn test_hook_type_enum() {
-        // Test that all hook types exist and can be used
-        let _all = HookType::All;
-        let _session = HookType::Session;
-        let _command = HookType::Command;
-        let _usage = HookType::Usage;
+    fn test_hook_scope_enum() {
+        // Test that all hook scopes exist and can be used
+        let _user = HookScope::User;
+        let _local = HookScope::Local;
         
         // Test Debug implementation
-        assert_eq!(format!("{:?}", HookType::All), "All");
-        assert_eq!(format!("{:?}", HookType::Session), "Session");
-        assert_eq!(format!("{:?}", HookType::Command), "Command");
-        assert_eq!(format!("{:?}", HookType::Usage), "Usage");
+        assert_eq!(format!("{:?}", HookScope::User), "User");
+        assert_eq!(format!("{:?}", HookScope::Local), "Local");
     }
 }

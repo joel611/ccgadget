@@ -7,13 +7,14 @@ Desktop command-line tool for [CCGadget](../../README.md) - an IoT-enabled hardw
 This CLI tool serves as the bridge between your Claude Code sessions and the CCGadget hardware device, enabling:
 
 - 🔗 **Bluetooth Pairing** - Connect to ESP32-S3 hardware via Bluetooth LE
-- 📊 **Real-time Monitoring** - Stream Claude Code usage data to the display  
+- 📊 **Real-time Monitoring** - Stream Claude Code usage data to the display
 - ⚡ **Hook Integration** - Automatic event capture via Claude Code hooks
 - 🎯 **Background Service** - Continuous monitoring daemon
 
 ## Installation
 
 ### From Source (Current)
+
 ```bash
 git clone <repository-url>
 cd ccgadget/server/cli
@@ -22,6 +23,7 @@ cargo install --path .
 ```
 
 ### Homebrew (Planned)
+
 ```bash
 brew install ccgadget
 ```
@@ -29,16 +31,19 @@ brew install ccgadget
 ## Quick Start
 
 1. **Build the CLI**:
+
    ```bash
    ./build.sh
    ```
 
 2. **Pair with your CCGadget device**:
+
    ```bash
    ccgadget pair
    ```
 
 3. **Install Claude Code hooks**:
+
    ```bash
    ccgadget install-hook all
    ```
@@ -51,6 +56,7 @@ brew install ccgadget
 ## Commands
 
 ### `ccgadget pair`
+
 Pair with CCGadget device via Bluetooth LE scanning.
 
 ```bash
@@ -63,20 +69,17 @@ ccgadget pair --device "AA:BB:CC:DD:EE:FF"
 
 # Force re-pairing
 ccgadget pair --force
-
-# Demo mode (for testing without Bluetooth hardware)
-CCGADGET_DEMO_MODE=1 ccgadget pair
 ```
 
 **Features:**
-- 10-second Bluetooth scan with timeout protection
+
+- 10-second Bluetooth scan
 - Interactive device selection with signal strength
 - Support for device name or MAC address
 - Service discovery and connection verification
-- Demo mode for testing and CI environments
-- Automatic timeout and helpful error messages
 
 ### `ccgadget start`
+
 Start background daemon to monitor Claude Code usage.
 
 ```bash
@@ -90,7 +93,8 @@ ccgadget start --foreground
 ccgadget start --interval 15
 ```
 
-### `ccgadget trigger` 
+### `ccgadget trigger`
+
 Process Claude Code hook events (used internally by hooks).
 
 ```bash
@@ -98,25 +102,24 @@ Process Claude Code hook events (used internally by hooks).
 echo '{"session_id":"abc","hook_event_name":"UserPromptSubmit"}' | ccgadget trigger
 ```
 
-### `ccgadget install-hook`
-Install Claude Code hooks for automatic monitoring.
+### `ccgadget setup-hook`
+
+Setup Claude Code hooks helper.
 
 ```bash
-# Install all hook types
-ccgadget install-hook all
+# Setup (detault to local level)
+ccgadget setup-hook
 
-# Install specific hook types
-ccgadget install-hook session
-ccgadget install-hook command
-ccgadget install-hook usage
+# Setup on different levels
+ccgadget setup-hook -s user
+ccgadget setup-hook -s local
 
-# Force reinstall
-ccgadget install-hook all --force
 ```
 
 ## Development
 
 ### Building
+
 ```bash
 # Development build
 cargo build
@@ -129,13 +132,14 @@ cargo install --path .
 ```
 
 ### Testing
+
 ```bash
 # Complete test suite
 ./test.sh
 
 # Individual test categories
 cargo test --bin ccgadget           # Unit tests (6 tests)
-cargo test --test integration_tests # Integration tests (7 tests)  
+cargo test --test integration_tests # Integration tests (7 tests)
 cargo test --test bluetooth_tests   # Bluetooth tests (6 tests)
 
 # Hook functionality tests
@@ -143,14 +147,16 @@ cargo test --test bluetooth_tests   # Bluetooth tests (6 tests)
 ```
 
 **Test Coverage:**
+
 - ✅ CLI argument parsing and validation
 - ✅ JSON hook data processing and logging
 - ✅ Bluetooth manager initialization
-- ✅ Binary functionality verification  
+- ✅ Binary functionality verification
 - ✅ Command help systems
 - ✅ Log directory creation and management
 
 ### Project Structure
+
 ```
 server/cli/
 ├── src/
@@ -166,11 +172,13 @@ server/cli/
 ## Hook Integration
 
 ### Automatic Installation
+
 ```bash
 ccgadget install-hook all
 ```
 
 ### Manual Hook Configuration
+
 Add to your Claude Code hooks configuration:
 
 ```json
@@ -181,7 +189,7 @@ Add to your Claude Code hooks configuration:
         "matcher": ".*",
         "hooks": [
           {
-            "type": "command", 
+            "type": "command",
             "command": "ccgadget trigger"
           }
         ]
@@ -193,7 +201,7 @@ Add to your Claude Code hooks configuration:
         "hooks": [
           {
             "type": "command",
-            "command": "ccgadget trigger" 
+            "command": "ccgadget trigger"
           }
         ]
       }
@@ -205,10 +213,11 @@ Add to your Claude Code hooks configuration:
 ## Supported Platforms
 
 - **macOS** (Intel & Apple Silicon)
-- **Linux** (x86_64, ARM64)  
+- **Linux** (x86_64, ARM64)
 - **Windows** (x86_64)
 
 **Requirements:**
+
 - Rust 1.70+ for building from source
 - Bluetooth 5.0+ adapter for device pairing
 - Claude Code for hook integration
@@ -216,6 +225,7 @@ Add to your Claude Code hooks configuration:
 ## Hardware Compatibility
 
 **CCGadget Device Specifications:**
+
 - **MCU**: ESP32-S3R8 (dual-core, 8MB PSRAM)
 - **Display**: 466x466 circular AMOLED with touch
 - **Connectivity**: Bluetooth 5.0 LE + 2.4GHz Wi-Fi
@@ -224,24 +234,17 @@ Add to your Claude Code hooks configuration:
 ## Troubleshooting
 
 ### Bluetooth Issues
-```bash
-# Use demo mode for testing
-CCGADGET_DEMO_MODE=1 ccgadget pair
 
+```bash
 # Check Bluetooth adapter
 ccgadget pair --help
 
 # Enable verbose logging
 RUST_LOG=debug ccgadget pair
-
-# If pairing hangs or fails:
-# 1. Enable Bluetooth in System Settings
-# 2. Grant Bluetooth permission in Privacy & Security settings
-# 3. Ensure Terminal has Bluetooth access
-# 4. Try running: sudo xcode-select --install (macOS)
 ```
 
-### Hook Issues  
+### Hook Issues
+
 ```bash
 # Test hook functionality
 ./test_all_hooks.sh
@@ -251,6 +254,7 @@ tail -f ~/.ccgadget/logs/trigger-$(date +%Y-%m-%d).log
 ```
 
 ### Build Issues
+
 ```bash
 # Clean and rebuild
 cargo clean
@@ -271,7 +275,7 @@ cargo tree
 ## References
 
 - [Claude Code Hooks Documentation](https://docs.anthropic.com/en/docs/claude-code/hooks)
-- [ccusage - Claude Code Usage Tracker](https://github.com/ryoppippi/ccusage) 
+- [ccusage - Claude Code Usage Tracker](https://github.com/ryoppippi/ccusage)
 - [ESP32-S3 Datasheet](https://www.espressif.com/en/products/socs/esp32-s3)
 - [Bluetooth LE Specification](https://www.bluetooth.com/specifications/bluetooth-core-specification/)
 

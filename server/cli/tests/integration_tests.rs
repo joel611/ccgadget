@@ -34,7 +34,7 @@ fn test_cli_help() {
     assert!(stdout.contains("pair"));
     assert!(stdout.contains("start"));
     assert!(stdout.contains("trigger"));
-    assert!(stdout.contains("install-hook"));
+    assert!(stdout.contains("setup-hook"));
 }
 
 #[test]
@@ -114,21 +114,24 @@ fn test_start_command_help() {
 }
 
 #[test]
-fn test_install_hook_command_help() {
+fn test_setup_hook_command_help() {
     ensure_binary_exists();
     
     let output = Command::new(BINARY_PATH)
-        .args(["install-hook", "--help"])
+        .args(["setup-hook", "--help"])
         .output()
         .expect("Failed to execute binary");
     
-    assert!(output.status.success());
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("Command failed with status: {:?}, stderr: {}", output.status.code(), stderr);
+    }
+    
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Install Claude Code hooks"));
-    assert!(stdout.contains("all"));
-    assert!(stdout.contains("session"));
-    assert!(stdout.contains("command"));
-    assert!(stdout.contains("usage"));
+    assert!(stdout.contains("Setup Claude Code hooks"));
+    assert!(stdout.contains("user"));
+    assert!(stdout.contains("local"));
+    assert!(stdout.contains("--scope"));
 }
 
 #[test]

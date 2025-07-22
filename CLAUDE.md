@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 CCGadget is an IoT-enabled hardware gadget that monitors and displays real-time Claude Code usage metrics. It consists of:
+
 - **Client**: ESP32-S3 microcontroller with embedded Rust firmware
 - **Server**: Cross-platform CLI tool (this directory) for desktop systems
 
@@ -31,23 +32,27 @@ cargo run --features <feature-name>
 ## Architecture
 
 ### Current State
+
 - **Language**: Standard Rust (not embedded like the client)
 - **Target**: Cross-platform CLI tool for macOS/Linux/Windows
 - **Integration**: Planned integration with Claude Code hooks and ccusage tool
 
 ### Planned CLI Commands
+
 - `ccgadget pair` - Bluetooth device pairing with ESP32 client
 - `ccgadget start` - Background daemon to fetch and send usage data
 - `ccgadget trigger` - Claude Code hook integration for real-time events
-- `ccgadget install-hook` - Install Claude Code hooks for automatic monitoring
+- `ccgadget setup-hook` - Setup Claude Code hooks helper
 
 ### System Integration
+
 - **Claude Code Hooks**: Integration planned for real-time session monitoring
 - **ccusage Tool**: External dependency for usage data collection
 - **Bluetooth/Wi-Fi**: Communication with ESP32-S3 hardware client
 - **Background Daemon**: Continuous monitoring and data transmission
 
 ### Project Structure
+
 ```
 server/cli/          # This directory - Desktop CLI tool
 ├── src/            # Rust source code
@@ -62,6 +67,7 @@ Related directories:
 ## Hardware Context
 
 When working on this CLI tool, understand it communicates with:
+
 - **ESP32-S3R8**: Dual-core microcontroller with 8MB PSRAM
 - **466x466 AMOLED Display**: Circular touch screen for metrics display
 - **Connectivity**: Bluetooth 5.0 + 2.4GHz Wi-Fi
@@ -79,3 +85,7 @@ Planned distribution via Homebrew: `brew install ccgadget`
 - Focus on cross-platform compatibility for desktop systems
 - Integration with external tools (Claude Code, ccusage) is key to functionality
 - Bluetooth/networking code will be central to device communication
+
+## Code Style
+
+- every function must include a concise, purpose-driven docstring
