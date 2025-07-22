@@ -173,6 +173,14 @@ async fn handle_pair(device: Option<&str>, force: bool) {
     }
 }
 
+/// Check if a device name matches CCGadget patterns
+pub fn is_ccgadget_device(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    name_lower.contains("ccgadget") || 
+    name_lower.starts_with("ccg-") ||
+    name_lower.contains("esp32-ccg")
+}
+
 /// Simulate pairing for demo/test mode
 async fn simulate_pairing(device: Option<&str>) {
     if let Some(device_name) = device {
@@ -190,10 +198,10 @@ async fn simulate_pairing(device: Option<&str>) {
     } else {
         println!("   📡 Simulating device scan...");
         tokio::time::sleep(Duration::from_millis(800)).await;
-        println!("   📱 Found 3 simulated device(s):");
+        println!("   📱 Found 3 CCGadget device(s):");
         println!("   1. CCGadget-Demo (AA:BB:CC:DD:EE:FF) - Signal: -45dBm");
-        println!("   2. iPhone-Test (11:22:33:44:55:66) - Signal: -67dBm");
-        println!("   3. Mock-Device (99:88:77:66:55:44) - Signal: -72dBm");
+        println!("   2. CCG-Office (11:22:33:44:55:66) - Signal: -67dBm");
+        println!("   3. ESP32-CCG-Lab (99:88:77:66:55:44) - Signal: -72dBm");
         println!("   0. Cancel");
         println!("   ℹ️ Auto-selecting device 1 for demo");
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -274,25 +282,33 @@ async fn scan_and_select_device() -> Result<Option<String>, Box<dyn std::error::
         return Ok(None);
     }
     
-    // Collect device information
+    // Collect CCGadget device information (filtered)
     let mut devices = Vec::new();
     for peripheral in peripherals {
         let properties = peripheral.properties().await?;
         if let Some(props) = properties {
             let name = props.local_name.unwrap_or_else(|| "Unknown Device".to_string());
-            let address = props.address.to_string();
-            let rssi = props.rssi.map(|r| format!("{}dBm", r)).unwrap_or_else(|| "N/A".to_string());
-            devices.push((name, address, rssi));
+            
+            // Filter: only include CCGadget devices
+            if is_ccgadget_device(&name) {
+                let address = props.address.to_string();
+                let rssi = props.rssi.map(|r| format!("{}dBm", r)).unwrap_or_else(|| "N/A".to_string());
+                devices.push((name, address, rssi));
+            }
         }
     }
     
     if devices.is_empty() {
-        println!("   ⚠️ No discoverable devices found");
+        println!("   ⚠️ No CCGadget devices found");
+        println!("   💡 Make sure your CCGadget device is:");
+        println!("      - Powered on and in pairing mode");
+        println!("      - Within Bluetooth range (10 meters)");
+        println!("      - Named with 'CCGadget', 'CCG-', or 'ESP32-CCG' prefix");
         return Ok(None);
     }
     
-    // Display found devices
-    println!("   📱 Found {} device(s):", devices.len());
+    // Display found CCGadget devices
+    println!("   📱 Found {} CCGadget device(s):", devices.len());
     for (i, (name, address, rssi)) in devices.iter().enumerate() {
         println!("   {}. {} ({}) - Signal: {}", i + 1, name, address, rssi);
     }
@@ -654,6 +670,27 @@ mod tests {
         } else {
             panic!("Expected Pair command");
         }
+    }
+
+    #[test]
+    fn test_device_name_filtering() {
+        // Test CCGadget device name patterns
+        assert!(is_ccgadget_device("CCGadget-Demo"));
+        assert!(is_ccgadget_device("ccgadget-home")); // case insensitive
+        assert!(is_ccgadget_device("My CCGadget Device"));
+        assert!(is_ccgadget_device("CCG-Office"));
+        assert!(is_ccgadget_device("ccg-lab"));
+        assert!(is_ccgadget_device("ESP32-CCG-Test"));
+        assert!(is_ccgadget_device("esp32-ccg-home"));
+        
+        // Test non-CCGadget device names should be filtered out
+        assert!(!is_ccgadget_device("iPhone"));
+        assert!(!is_ccgadget_device("MacBook Pro"));
+        assert!(!is_ccgadget_device("AirPods"));
+        assert!(!is_ccgadget_device("Unknown Device"));
+        assert!(!is_ccgadget_device("ESP32-Other"));
+        assert!(!is_ccgadget_device("CCG")); // too short
+        assert!(!is_ccgadget_device(""));
     }
 
     #[test]

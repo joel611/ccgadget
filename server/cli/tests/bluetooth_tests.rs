@@ -77,7 +77,7 @@ fn test_pair_command_scanning_mode() {
     // Should start scanning process in demo mode
     assert!(stdout.contains("Pairing with CCGadget device"));
     assert!(stdout.contains("demo/test mode"));
-    assert!(stdout.contains("Found 3 simulated device(s)"));
+    assert!(stdout.contains("Found 3 CCGadget device(s)"));
     println!("Demo scanning mode output: {}", stdout);
 }
 
@@ -123,6 +123,7 @@ fn test_real_bluetooth_scan() {
     
     println!("✅ Bluetooth scanning process started successfully");
 }
+
 
 #[test]
 fn test_pair_help_contains_bluetooth_info() {
