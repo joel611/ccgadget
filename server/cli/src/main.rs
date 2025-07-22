@@ -736,15 +736,19 @@ fn setup_hook_for_event(
             // Perfect match - hook is already correctly configured
             println!("   ✅ Hook for {} already correctly configured", event_name);
             return Ok(HookSetupResult::AlreadyExists);
-        } else if any_ccgadget_exists {
+        }
+        
+        // Determine what action to take
+        let action = if any_ccgadget_exists {
             // ccgadget hook exists but with wrong configuration - ask user
             if force {
                 println!("   🔧 Forcing update of mismatched hook for {}", event_name);
+                HookAction::Replace
             } else if auto_approve {
                 println!("   ✅ Auto-approving hook update for {} (--yes flag)", event_name);
-            } else if !ask_user_permission_to_fix_hook(event_name, event_hooks_value, hook_command)? {
-                println!("   ⏭️ Skipping hook update for {} (user declined)", event_name);
-                return Ok(HookSetupResult::Skipped);
+                HookAction::Replace
+            } else {
+                ask_user_fix_hook_action(event_name, event_hooks_value, hook_command)?
             }
         } else if has_other_hooks {
             // Check if there are any non-ccgadget hooks
@@ -753,40 +757,72 @@ fn setup_hook_for_event(
                 .unwrap_or(false);
                 
             if has_non_ccgadget_hooks {
-                // Other non-ccgadget hooks exist - ask user for permission to add
+                // Other non-ccgadget hooks exist - ask user what to do
                 if auto_approve {
                     println!("   ✅ Auto-approving hook addition for {} (--yes flag)", event_name);
-                } else if !ask_user_permission_for_event(event_name, event_hooks_value)? {
-                    println!("   ⏭️ Skipping hook for {} (user declined)", event_name);
-                    return Ok(HookSetupResult::Skipped);
+                    HookAction::Append
+                } else {
+                    ask_user_hook_action(event_name, event_hooks_value)?
                 }
+            } else {
+                // No actual hooks, just add
+                HookAction::Append
+            }
+        } else {
+            // No hooks at all, just add
+            HookAction::Append
+        };
+        
+        // Handle user choice
+        match action {
+            HookAction::Skip => {
+                println!("   ⏭️ Skipping hook for {} (user chose skip)", event_name);
+                return Ok(HookSetupResult::Skipped);
+            }
+            HookAction::Replace => {
+                // Replace all existing hooks with just our ccgadget hook
+                let hook_config = serde_json::json!([
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": hook_command
+                            }
+                        ]
+                    }
+                ]);
+                hooks.insert(event_name.to_string(), hook_config);
+                println!("   🔄 Replaced all hooks for {} with ccgadget hook", event_name);
+            }
+            HookAction::Append => {
+                // Add ccgadget hook alongside existing hooks
+                let event_hooks_array = hooks.get_mut(event_name).unwrap()
+                    .as_array_mut()
+                    .ok_or("Event hooks must be an array")?;
+                
+                // Remove existing ccgadget hooks first (if any) to avoid duplicates
+                if any_ccgadget_exists {
+                    event_hooks_array.retain(|hook_group| {
+                        !hook_group_contains_command(hook_group, "ccgadget")
+                    });
+                }
+                
+                // Add our hook to the existing array
+                let ccgadget_hook = serde_json::json!({
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": hook_command
+                        }
+                    ]
+                });
+                
+                event_hooks_array.push(ccgadget_hook);
+                println!("   ➕ Added ccgadget hook alongside existing hooks for {}", event_name);
             }
         }
-        
-        // Now get mutable borrow for modifications
-        let event_hooks_array = hooks.get_mut(event_name).unwrap()
-            .as_array_mut()
-            .ok_or("Event hooks must be an array")?;
-        
-        // Remove existing ccgadget hooks (they exist but are wrong)
-        if any_ccgadget_exists {
-            event_hooks_array.retain(|hook_group| {
-                !hook_group_contains_command(hook_group, hook_command)
-            });
-        }
-        
-        // Add our hook to the existing array
-        let ccgadget_hook = serde_json::json!({
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_command
-                }
-            ]
-        });
-        
-        event_hooks_array.push(ccgadget_hook);
     } else {
         // No existing hooks for this event - create new array
         let hook_config = serde_json::json!([
@@ -877,8 +913,16 @@ fn hook_group_contains_command(hook_group: &serde_json::Value, target_command: &
     false
 }
 
-/// Ask user for permission to add hooks for a specific event when conflicts exist
-fn ask_user_permission_for_event(event_name: &str, existing_hooks: &serde_json::Value) -> Result<bool, Box<dyn std::error::Error>> {
+/// User choice for handling hook conflicts
+#[derive(Debug, PartialEq)]
+enum HookAction {
+    Replace,  // Replace existing hooks with ccgadget hook
+    Append,   // Add ccgadget hook alongside existing hooks
+    Skip,     // Skip this event, leave existing hooks unchanged
+}
+
+/// Ask user what to do with existing hooks for a specific event
+fn ask_user_hook_action(event_name: &str, existing_hooks: &serde_json::Value) -> Result<HookAction, Box<dyn std::error::Error>> {
     println!("   ⚠️ Event '{}' already has existing hooks configured:", event_name);
     
     // Display existing hooks in a user-friendly way
@@ -898,23 +942,38 @@ fn ask_user_permission_for_event(event_name: &str, existing_hooks: &serde_json::
         }
     }
     
-    print!("   Add 'ccgadget trigger' for {} alongside existing hooks? [y/N]: ", event_name);
+    println!("   How would you like to handle 'ccgadget trigger' for {}?", event_name);
+    println!("     [r] Replace - Remove existing hooks and add ccgadget hook");
+    println!("     [a] Append  - Add ccgadget hook alongside existing hooks");
+    println!("     [s] Skip    - Keep existing hooks unchanged");
+    print!("   Choose [r/a/s]: ");
     std::io::stdout().flush()?;
     
     // Read user input
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input = input.trim().to_lowercase();
-    
-    Ok(input == "y" || input == "yes")
+    loop {
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        
+        match input.as_str() {
+            "r" | "replace" => return Ok(HookAction::Replace),
+            "a" | "append" => return Ok(HookAction::Append),
+            "s" | "skip" => return Ok(HookAction::Skip),
+            _ => {
+                print!("   Invalid choice. Please enter [r]eplace, [a]ppend, or [s]kip: ");
+                std::io::stdout().flush()?;
+                continue;
+            }
+        }
+    }
 }
 
-/// Ask user for permission to fix/update a mismatched ccgadget hook
-fn ask_user_permission_to_fix_hook(event_name: &str, existing_hooks: &serde_json::Value, expected_command: &str) -> Result<bool, Box<dyn std::error::Error>> {
+/// Ask user what to do with mismatched ccgadget hooks
+fn ask_user_fix_hook_action(event_name: &str, existing_hooks: &serde_json::Value, expected_command: &str) -> Result<HookAction, Box<dyn std::error::Error>> {
     println!("   ⚠️ Event '{}' has ccgadget hooks but with incorrect configuration:", event_name);
     
     // Show current vs expected
-    println!("   Current hooks:");
+    println!("   Current ccgadget hooks:");
     if let Some(hooks_array) = existing_hooks.as_array() {
         for (i, hook_group) in hooks_array.iter().enumerate() {
             if hook_group_contains_command(hook_group, "ccgadget") {
@@ -935,17 +994,57 @@ fn ask_user_permission_to_fix_hook(event_name: &str, existing_hooks: &serde_json
         }
     }
     
-    println!("   Expected: {} (matcher: all)", expected_command);
+    // Show non-ccgadget hooks if any
+    let has_non_ccgadget = existing_hooks.as_array()
+        .map(|arr| arr.iter().any(|hook_group| !hook_group_contains_command(hook_group, "ccgadget")))
+        .unwrap_or(false);
+        
+    if has_non_ccgadget {
+        println!("   Other existing hooks:");
+        if let Some(hooks_array) = existing_hooks.as_array() {
+            for (i, hook_group) in hooks_array.iter().enumerate() {
+                if !hook_group_contains_command(hook_group, "ccgadget") {
+                    if let Some(hooks) = hook_group.get("hooks").and_then(|h| h.as_array()) {
+                        for (j, hook) in hooks.iter().enumerate() {
+                            if let Some(command) = hook.get("command").and_then(|c| c.as_str()) {
+                                let matcher = hook_group.get("matcher")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("");
+                                let matcher_display = if matcher.is_empty() { "all" } else { matcher };
+                                println!("     {}.{}: {} (matcher: {})", i + 1, j + 1, command, matcher_display);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
-    print!("   Update ccgadget hook for {} to correct configuration? [y/N]: ", event_name);
+    println!("   Expected ccgadget hook: {} (matcher: all)", expected_command);
+    println!("   How would you like to handle the incorrect ccgadget hook for {}?", event_name);
+    println!("     [r] Replace - Fix ccgadget hook to correct configuration");
+    println!("     [a] Append  - Add correct ccgadget hook alongside current ones"); 
+    println!("     [s] Skip    - Keep current hooks unchanged");
+    print!("   Choose [r/a/s]: ");
     std::io::stdout().flush()?;
     
     // Read user input
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let input = input.trim().to_lowercase();
-    
-    Ok(input == "y" || input == "yes")
+    loop {
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        
+        match input.as_str() {
+            "r" | "replace" => return Ok(HookAction::Replace),
+            "a" | "append" => return Ok(HookAction::Append),
+            "s" | "skip" => return Ok(HookAction::Skip),
+            _ => {
+                print!("   Invalid choice. Please enter [r]eplace, [a]ppend, or [s]kip: ");
+                std::io::stdout().flush()?;
+                continue;
+            }
+        }
+    }
 }
 
 fn handle_setup_hook(scope: &HookScope, force: bool, auto_approve: bool) {
